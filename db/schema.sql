@@ -30,6 +30,7 @@ CREATE TABLE public.recipes(
     credits TEXT,
     isPrivate BOOLEAN NOT NULL DEFAULT TRUE,
     img TEXT,
+    createdAt TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT fk_uid FOREIGN KEY (userId) REFERENCES public.users(id) ON DELETE CASCADE
 );
 
