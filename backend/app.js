@@ -129,16 +129,21 @@ app.get('/api/health', async (req, res) => {
 
 
 // ------------------------------------------------------------
-// GET /api/recipes
+// GET /api/recipes?sort_by=save_count&order=DESC
 // List every recipe, this will be used for the main page. Which will be a feed of recipes the user scrolls through
 // ------------------------------------------------------------
 app.get('/api/recipes', async (req, res, next) => {
+  const sortBy = req.query.sort_by === 'createdAt'? 'r.createdAt':'save_count';
+
+  const sortOrder = req.query.order === 'ASC'? 'ASC':'DESC';
+
   try {
     const result = await pool.query(`
       ${recipeSummary}
-      WHERE isPrivate = False
-      ORDER BY save_count DESC, r.id DESC
+      WHERE r.isPrivate = FALSE
+      ORDER BY ${sortBy} ${sortOrder}, r.id ${sortOrder}
     `);
+
     res.json(result.rows);
   } catch (err) {
     next(err);
@@ -256,6 +261,9 @@ app.get('/api/recipes/:id', async (req, res, next) => {
 // ------------------------------------------------------------
 app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
   const userId = req.user.id;
+  const sortBy = req.query.sort_by === 'createdAt'? 'r.createdAt':'save_count';
+
+  const sortOrder = req.query.order === 'ASC'? 'ASC':'DESC';
 
   if (!isId(userId)) {
     return res.status(400).json({
@@ -273,7 +281,7 @@ app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
           WHERE saved.recipeId = r.id
             AND saved.userId = $1
         )
-      ORDER BY save_count DESC, r.id DESC
+      ORDER BY ${sortBy} ${sortOrder}, r.id ${sortOrder}
     `, [userId]);
 
     res.json(result.rows);
@@ -286,17 +294,25 @@ app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
 // Get /api/my-recipes
 // -------------------------
 app.get('/api/my-recipes', requireUser, async (req, res, next) => {
+  const sortBy = req.query.sort_by === 'createdAt'? 'r.createdAt':'save_count';
+  const sortOrder = req.query.order === 'ASC'? 'ASC':'DESC';
+
   try {
     const result = await pool.query(`
       SELECT
-        id,
-        title,
-        descript,
-        img,
-        isPrivate AS "isPrivate"
-      FROM public.recipes
+        r.id,
+        r.title,
+        r.descript,
+        r.img,
+        r.isPrivate AS "isPrivate",
+        (
+          SELECT COUNT(*)::int
+          FROM public.saved_recipes sr
+          WHERE sr.recipeId = r.id
+        ) AS save_count
+      FROM public.recipes r
       WHERE userId = $1
-      ORDER BY id DESC
+      ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}
     `, [req.user.id]);
 
     res.json(result.rows);
