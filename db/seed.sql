@@ -19,10 +19,10 @@ TRUNCATE public.users, public.saved_recipes, public.recipe_tags, public.tags, pu
 -- Instructors  (explicit ids so we can reference them below)
 -- ------------------------------------------------------------
 INSERT INTO tags (tag) VALUES
-  ('Baking'),
-  ('Cooking'),
-  ('Vegan'),
-  ('Vegetarian');
+  ('BAKING'),
+  ('COOKING'),
+  ('VEGAN'),
+  ('VEGETARIAN');
 
 -- ------------------------------------------------------------
 -- Courses

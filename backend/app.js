@@ -129,20 +129,55 @@ app.get('/api/health', async (req, res) => {
 
 
 // ------------------------------------------------------------
-// GET /api/recipes?sort_by=save_count&order=DESC
+// GET /api/recipes?sort_by=save_count&order=DESC&search=cookies&tags=BAKING&tags=COOKING
 // List every recipe, this will be used for the main page. Which will be a feed of recipes the user scrolls through
 // ------------------------------------------------------------
 app.get('/api/recipes', async (req, res, next) => {
   const sortBy = req.query.sort_by === 'createdAt'? 'r.createdAt':'save_count';
+  const rawTags = req.query.tags;
+
+  const tags = rawTags === undefined
+    ? []
+    : Array.isArray(rawTags) ? rawTags : [rawTags];
+
+  if (!tags.every(tag => typeof tag === 'string' && tag.trim() !== '')) {
+    return res.status(400).json({
+      error: 'tags must contain non-empty strings'
+    });
+  }
+
+  const searchTags = tags.map(tag => tag.trim().toUpperCase());
 
   const sortOrder = req.query.order === 'ASC'? 'ASC':'DESC';
+
+  if (
+    req.query.search !== undefined &&
+    typeof req.query.search !== 'string'
+  ) {
+    return res.status(400).json({
+      error: 'search must be a string'
+    });
+  }
+
+  const search_text= req.query.search?.trim() ?? ''
 
   try {
     const result = await pool.query(`
       ${recipeSummary}
-      WHERE r.isPrivate = FALSE
+      WHERE r.isPrivate = FALSE 
+      AND ($1 = '' OR STRPOS(LOWER(r.title), LOWER($1)) > 0)
+      AND (
+        cardinality($2::text[]) = 0
+        OR EXISTS (
+          SELECT 1
+          FROM public.recipe_tags rt
+          JOIN public.tags t ON t.id = rt.tagId
+          WHERE rt.recipeId = r.id
+            AND t.tag = ANY($2::text[])
+        )
+      )
       ORDER BY ${sortBy} ${sortOrder}, r.id ${sortOrder}
-    `);
+    `,[search_text,searchTags]);
 
     res.json(result.rows);
   } catch (err) {
@@ -257,13 +292,35 @@ app.get('/api/recipes/:id', async (req, res, next) => {
 
 
 // ------------------------------------------------------------
-// Get /api/saved_recipes
+// Get /api/saved_recipes?sort_by=save_count&order=DESC&search=cookies&tags=BAKING&tags=COOKING
 // ------------------------------------------------------------
 app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
   const userId = req.user.id;
   const sortBy = req.query.sort_by === 'createdAt'? 'r.createdAt':'save_count';
+  const rawTags = req.query.tags;
+  const tags = rawTags === undefined
+    ? []
+    : Array.isArray(rawTags) ? rawTags : [rawTags];
 
+  if (!tags.every(tag => typeof tag === 'string' && tag.trim() !== '')) {
+    return res.status(400).json({
+      error: 'tags must contain non-empty strings'
+    });
+  }
+
+  const searchTags = tags.map(tag => tag.trim().toUpperCase());
   const sortOrder = req.query.order === 'ASC'? 'ASC':'DESC';
+
+  if (
+    req.query.search !== undefined &&
+    typeof req.query.search !== 'string'
+  ) {
+    return res.status(400).json({
+      error: 'search must be a string'
+    });
+  }  
+
+  const search_text= req.query.search?.trim() ?? ''
 
   if (!isId(userId)) {
     return res.status(400).json({
@@ -275,6 +332,17 @@ app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
     const result = await pool.query(`
       ${recipeSummary}
       WHERE r.isPrivate = FALSE
+        AND ($2 = '' OR STRPOS(LOWER(r.title), LOWER($2)) > 0)
+        AND (
+          cardinality($3::text[]) = 0
+          OR EXISTS (
+            SELECT 1
+            FROM public.recipe_tags rt
+            JOIN public.tags t ON t.id = rt.tagId
+            WHERE rt.recipeId = r.id
+              AND t.tag = ANY($3::text[])
+          )
+        )
         AND EXISTS (
           SELECT 1
           FROM public.saved_recipes saved
@@ -282,7 +350,7 @@ app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
             AND saved.userId = $1
         )
       ORDER BY ${sortBy} ${sortOrder}, r.id ${sortOrder}
-    `, [userId]);
+    `, [userId, search_text, searchTags]);
 
     res.json(result.rows);
   } catch (err) {
@@ -291,11 +359,35 @@ app.get('/api/saved-recipes',requireUser, async (req, res, next) => {
 });
 
 // -------------------------
-// Get /api/my-recipes
+// Get /api/my-recipes?sort_by=save_count&order=DESC&search=cookies&tags=BAKING&tags=COOKING
 // -------------------------
 app.get('/api/my-recipes', requireUser, async (req, res, next) => {
   const sortBy = req.query.sort_by === 'createdAt'? 'r.createdAt':'save_count';
   const sortOrder = req.query.order === 'ASC'? 'ASC':'DESC';
+
+  const rawTags = req.query.tags;
+  const tags = rawTags === undefined
+    ? []
+    : Array.isArray(rawTags) ? rawTags : [rawTags];
+
+  if (!tags.every(tag => typeof tag === 'string' && tag.trim() !== '')) {
+    return res.status(400).json({
+      error: 'tags must contain non-empty strings'
+    });
+  }
+
+  const searchTags = tags.map(tag => tag.trim().toUpperCase());
+
+  if (
+    req.query.search !== undefined &&
+    typeof req.query.search !== 'string'
+  ) {
+    return res.status(400).json({
+      error: 'search must be a string'
+    });
+  }
+
+  const search_text= req.query.search?.trim() ?? ''
 
   try {
     const result = await pool.query(`
@@ -309,11 +401,34 @@ app.get('/api/my-recipes', requireUser, async (req, res, next) => {
           SELECT COUNT(*)::int
           FROM public.saved_recipes sr
           WHERE sr.recipeId = r.id
-        ) AS save_count
+        ) AS save_count,
+        (
+          SELECT COALESCE(
+            json_agg(
+              json_build_object('id', t.id, 'tag', t.tag)
+              ORDER BY t.tag, t.id
+            ),
+            '[]'::json
+          )
+          FROM public.recipe_tags rt
+          JOIN public.tags t ON t.id = rt.tagId
+          WHERE rt.recipeId = r.id
+        ) AS tags
       FROM public.recipes r
-      WHERE userId = $1
+      WHERE userId = $1 
+      AND ($2 = '' OR STRPOS(LOWER(r.title), LOWER($2)) > 0)
+      AND (
+        cardinality($3::text[]) = 0
+        OR EXISTS (
+          SELECT 1
+          FROM public.recipe_tags rt
+          JOIN public.tags t ON t.id = rt.tagId
+          WHERE rt.recipeId = r.id
+            AND t.tag = ANY($3::text[])
+        )
+      )
       ORDER BY ${sortBy} ${sortOrder}, id ${sortOrder}
-    `, [req.user.id]);
+    `, [req.user.id,search_text,searchTags]);
 
     res.json(result.rows);
   } catch (err) {
